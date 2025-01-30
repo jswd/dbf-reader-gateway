@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
-import { useToast } from '@/components/ui/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { supabase } from '@/integrations/supabase/client';
 
 interface FileUploaderProps {
   onFileLoaded: (data: ArrayBuffer) => void;
@@ -11,7 +12,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileLoaded, isLoading }) 
   const [isDragging, setIsDragging] = useState(false);
   const { toast } = useToast();
 
-  const handleFile = useCallback((file: File) => {
+  const handleFile = useCallback(async (file: File) => {
     if (!file.name.toLowerCase().endsWith('.dbf')) {
       toast({
         variant: "destructive",
@@ -21,13 +22,47 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileLoaded, isLoading }) 
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      if (e.target?.result instanceof ArrayBuffer) {
-        onFileLoaded(e.target.result);
+    try {
+      // Leer el archivo como ArrayBuffer para la visualización
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result instanceof ArrayBuffer) {
+          onFileLoaded(e.target.result);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+
+      // Subir el archivo a Supabase
+      const filePath = `${crypto.randomUUID()}-${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('dbf_uploads')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        throw uploadError;
       }
-    };
-    reader.readAsArrayBuffer(file);
+
+      // Procesar el archivo
+      const { error: processError } = await supabase.functions.invoke('process-dbf', {
+        body: { fileName: file.name, filePath }
+      });
+
+      if (processError) {
+        throw processError;
+      }
+
+      toast({
+        title: "Archivo subido exitosamente",
+        description: "El archivo se está procesando...",
+      });
+
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error.message || "Error al procesar el archivo",
+      });
+    }
   }, [onFileLoaded, toast]);
 
   const onDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
